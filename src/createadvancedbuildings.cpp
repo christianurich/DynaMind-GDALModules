@@ -3,12 +3,40 @@
 #include <ogr_api.h>
 #include <ogrsf_frmts.h>
 #include <CGAL/Aff_transformation_2.h>
+#include <geos_c.h>
 
 typedef CGAL::Point_2< SFCGAL::Kernel >              Point_2 ;
 typedef CGAL::Vector_2< SFCGAL::Kernel >             Vector_2 ;
 typedef CGAL::Polygon_2< SFCGAL::Kernel >            Polygon_2 ;
 typedef CGAL::Polygon_with_holes_2< SFCGAL::Kernel > Polygon_with_holes_2;
 typedef std::list<Polygon_with_holes_2>              Pwh_list_2;
+
+/*for (int i = 1; i < n_points; i++) {
+	Point_2 p1(parcel_points[i-1]->getX(), parcel_points[i-1]->getY());
+	Point_2 p2(parcel_points[i]->getX(), parcel_points[i]->getY());
+	Segment_2 s (p1, p2);
+	Vector_2 v = s.to_vector();
+	Vector_2 v1 = (p2-p1);
+	Vector_2 e1 = v1 / sqrt(CGAL::to_double(v1.squared_length()));
+	e1 = rotate(e1);
+	Point_2 tmp_p1 = p1 + e1*1;
+	Point_2 tmp_p2 = p2 + e1*1;
+	foreach(OGRLineString * bl, boundary_lines) {
+		double d1 =  bl->Distance(parcel_points[i-1]);
+		double d2 =  bl->Distance(parcel_points[i]);
+		if (d1 < 0.00001 && d2 < 0.000001) {
+			tmp_p1 = p1 + e1*4;
+			tmp_p2 = p2 + e1*4;
+		}
+	}
+	OGRLineString  l1;
+	OGRPoint *p_1 =  new OGRPoint(CGAL::to_double(tmp_p1.x()), CGAL::to_double(tmp_p1.y()));
+	OGRPoint *p_2 =  new OGRPoint(CGAL::to_double(tmp_p2.x()), CGAL::to_double(tmp_p2.y()));
+	l1.addPoint(p_1);
+	l1.addPoint(p_2);
+	OGRFeature * f1 = street_access.createFeature();
+	f1->SetGeometry(&l1);
+}*/
 
 DM_DECLARE_NODE_NAME(CreateAdvancedBuildings, GDALModules)
 
@@ -116,9 +144,9 @@ OGRGeometry* CreateAdvancedBuildings::createBuilding(OGRPolygon *ogr_poly, OGRPo
 	}
 
 	n_points = ogr_poly->getExteriorRing()->getNumPoints();
-	//DM::Logger(DM::Error) << n_points;
-	/*foreach(OGRLineString * l, boundary_lines)
-		DM::Logger(DM::Error) << l->get_Length();*/
+
+
+
 
 	std::vector<OGRPoint*> parcel_points;
 
@@ -129,61 +157,59 @@ OGRGeometry* CreateAdvancedBuildings::createBuilding(OGRPolygon *ogr_poly, OGRPo
 	}
 	const double PI = 3.141592653589793;
 	CGAL::Aff_transformation_2<SFCGAL::Kernel> rotate(CGAL::ROTATION,sin(PI/2),cos(PI/2));
-
-	std::vector<Segment_2> segments;
-	for (int i = 1; i < n_points; i++) {
+	OGRLineString l_street;
+	std::vector<int> ids;
+	//find start id
+	bool first = false;
+	int start_id = 0;
+	for (int i = 0; i < n_points-1; i++) {
+		bool start_node = false;
 		foreach(OGRLineString * bl, boundary_lines) {
-			double d1 =  bl->Distance(parcel_points[i-1]);
-			double d2 =  bl->Distance(parcel_points[i]);
-
-			if (d1 < 0.00001 && d2 < 0.000001) {
-				OGRLineString  l;
-				l.addPoint(parcel_points[i-1]);
-				l.addPoint(parcel_points[i]);
-				OGRFeature * f = street_access.createFeature();
-				f->SetGeometry(&l);
-				Point_2 p1(parcel_points[i-1]->getX(), parcel_points[i-1]->getY());
-				Point_2 p2(parcel_points[i]->getX(), parcel_points[i]->getY());
-				Segment_2 s (p1, p2);
-				Vector_2 v = s.to_vector();
-				Vector_2 v1 = (p2-p1);
-				Vector_2 e1 = v1 / sqrt(CGAL::to_double(v1.squared_length()));
-				e1 = rotate(e1);
-				Point_2 tmp_p1 = p1 + e1 ;
-				Point_2 tmp_p2 = p2 + e1 ;
-				DM::Logger(DM::Error) << CGAL::to_double(tmp_p1.x()) << " " << CGAL::to_double(tmp_p1.y()) << " " << CGAL::to_double(tmp_p2.x()) << " " << CGAL::to_double(tmp_p2.y());
-				OGRLineString  l1;
-				OGRPoint *p_1 =  new OGRPoint(CGAL::to_double(tmp_p1.x()), CGAL::to_double(tmp_p1.y()));
-				OGRPoint *p_2 =  new OGRPoint(CGAL::to_double(tmp_p2.x()), CGAL::to_double(tmp_p2.y()));
-				l1.addPoint(p_1);
-				l1.addPoint(p_2);
-				OGRFeature * f1 = street_access.createFeature();
-				f1->SetGeometry(&l1);
-
-				//Vector_2 v1 = (p2-p1);
-				//Vector_2 e1 = v1 / sqrt(CGAL::to_double(v1.squared_length()));
-
-
+			double d1 =  bl->Distance(parcel_points[i]);
+			if (d1 < 0.0001) {
+				start_node = true;
+				break;
+			}
+		}
+		if (!start_node){
+			first = false;
+		} else {
+			ids.push_back(i);
+			if (!first) {
+				first = true;
+				start_id = i;
 			}
 		}
 	}
+	//1,2, 5,6
+	std::vector<int> sorted_vec;
+	if (start_id != ids[0]) {
+		int length = ids.size();
+		int pos = std::find(ids.begin(), ids.end(), start_id) - ids.begin();
+		DM::Logger(DM::Error) << pos;
+		for(int i = pos; i < length; i++)
+			sorted_vec.push_back(ids[i]);
+		for(int i = 0; i < pos; i++)
+			sorted_vec.push_back(ids[i]);
+		ids = sorted_vec;
+	}
+	foreach(int i, ids) {
+		DM::Logger(DM::Error) << i;
+		l_street.addPoint(parcel_points[i]);
+	}
 
+	GEOSContextHandle_t gh = OGRGeometry::createGEOSContext();
+	//Calculate intersections
+	GEOSGeometry* geos_p = l_street.exportToGEOS(gh);
+	GEOSGeometry* geos_l = GEOSSingleSidedBuffer_r(gh, geos_p, 4, 0, 1,0.1,true);
+	if (geos_l == NULL) {
+	} else {
+		OGRGeometry * ogr_geo = OGRGeometryFactory::createFromGEOS(gh, geos_l);
+		OGRFeature * f1 = street_access.createFeature();
+		f1->SetGeometry(ogr_geo);
+	}
 
-
-	/*DM::Logger(DM::Error) << "--";
-	foreach(OGRLineString * bl, boundary_lines) {
-		foreach(OGRLineString * p, parcel_lines) {
-			double d =  bl->Distance(p);
-			if (d < 0.000001) {
-				OGRFeature * f = street_access.createFeature();
-				f->SetGeometry(p);
-				DM::Logger(DM::Error) << "street";
-			}
-
-		}
-	}*/
-
-	Polygon_with_holes_2 p = inter.front();//poly.toPolygon_with_holes_2(true);
+	Polygon_with_holes_2 p = inter.front();
 	SFCGAL::Polygon poly_build(inter.front());
 	Polygon_2 p_c;
 	CGAL::convex_hull_2(p.outer_boundary().vertices_begin(), p.outer_boundary().vertices_end(), std::back_inserter(p_c));
@@ -287,7 +313,7 @@ CreateAdvancedBuildings::CreateAdvancedBuildings()
 
 	cityblock = DM::ViewContainer("cityblock", DM::FACE, DM::READ);
 
-	street_access = DM::ViewContainer("street_access", DM::EDGE, DM::READ);
+	street_access = DM::ViewContainer("street_access", DM::EDGE, DM::WRITE);
 
 	std::vector<DM::ViewContainer*> data_stream;
 	data_stream.push_back(&parcel);
